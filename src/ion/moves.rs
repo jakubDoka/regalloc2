@@ -26,7 +26,7 @@ use crate::ion::reg_traversal::RegTraversalIter;
 use crate::moves::{MoveAndScratchResolver, ParallelMoves};
 use crate::{
     Allocation, Block, Edit, Function, FxHashMap, Inst, InstPosition, OperandConstraint,
-    OperandKind, OperandPos, PReg, ProgPoint, RegClass, SpillSlot,
+    OperandKind, OperandPos, PReg, ProgPoint, RegClass, SpillSlot, VecExt,
 };
 use alloc::format;
 use alloc::vec::Vec;
@@ -78,7 +78,8 @@ impl<'a, F: Function> Env<'a, F> {
         trace!("blockparam_ins: {:?}", self.ctx.blockparam_ins);
         trace!("blockparam_outs: {:?}", self.ctx.blockparam_outs);
 
-        let mut inserted_moves = InsertedMoves::default();
+        // We will return this back outside of this function.
+        let mut inserted_moves = core::mem::take(&mut self.ctx.scratch_moves.inserted_moves);
 
         // Now that all splits are done, we can pay the cost once to
         // sort VReg range lists and update with the final ranges.
@@ -89,19 +90,26 @@ impl<'a, F: Function> Env<'a, F> {
             vreg.ranges.sort_unstable_by_key(|entry| entry.range.from);
         }
 
-        let mut inter_block_sources: FxHashMap<Block, Allocation> = FxHashMap::default();
-        let mut inter_block_dests = Vec::with_capacity(self.func.num_blocks());
+        let mut move_ctx = core::mem::take(&mut self.ctx.scratch_moves);
 
-        let mut block_param_sources =
-            FxHashMap::<BlockparamSourceKey, Allocation>::with_capacity_and_hasher(
-                3 * self.func.num_insts(),
-                Default::default(),
-            );
-        let mut block_param_dests = Vec::with_capacity(3 * self.func.num_insts());
+        move_ctx
+            .inter_block_dests
+            .preallocate(self.func.num_blocks());
+
+        move_ctx.block_param_sources.clear();
+        move_ctx
+            .block_param_sources
+            .reserve(3 * self.func.num_insts());
+
+        move_ctx
+            .block_param_dests
+            .preallocate(3 * self.func.num_insts());
 
         let debug_labels = self.func.debug_value_labels();
 
-        let mut reuse_input_insts = Vec::with_capacity(self.func.num_insts() / 2);
+        move_ctx
+            .reuse_input_insts
+            .preallocate(self.func.num_insts() / 2);
 
         let mut blockparam_in_idx = 0;
         let mut blockparam_out_idx = 0;
@@ -111,7 +119,7 @@ impl<'a, F: Function> Env<'a, F> {
                 continue;
             }
 
-            inter_block_sources.clear();
+            move_ctx.inter_block_sources.clear();
 
             // For each range in each vreg, insert moves or
             // half-moves.  We also scan over `blockparam_ins` and
@@ -215,7 +223,7 @@ impl<'a, F: Function> Env<'a, F> {
                     }
                     trace!("examining block with end in range: block{}", block.index());
 
-                    match inter_block_sources.entry(block) {
+                    match move_ctx.inter_block_sources.entry(block) {
                         // If the entry is already present in the map, we'll try to prefer a
                         // register allocation.
                         Entry::Occupied(mut entry) => {
@@ -257,7 +265,7 @@ impl<'a, F: Function> Env<'a, F> {
                             );
 
                             let key = BlockparamSourceKey::new(from_block, to_vreg);
-                            match block_param_sources.entry(key) {
+                            match move_ctx.block_param_sources.entry(key) {
                                 // As with inter-block moves, if the entry is already present we'll
                                 // try to prefer a register allocation.
                                 Entry::Occupied(mut entry) => {
@@ -322,7 +330,7 @@ impl<'a, F: Function> Env<'a, F> {
                             break;
                         }
                         if (to_vreg, to_block) == (vreg, block) {
-                            block_param_dests.push(BlockparamDest {
+                            move_ctx.block_param_dests.push(BlockparamDest {
                                 from_block,
                                 to_block,
                                 to_vreg,
@@ -377,11 +385,14 @@ impl<'a, F: Function> Env<'a, F> {
                             continue;
                         }
 
-                        inter_block_dests.push(InterBlockDest {
-                            from: pred,
-                            to: block,
-                            alloc,
-                        })
+                        self.ctx
+                            .scratch_moves
+                            .inter_block_dests
+                            .push(InterBlockDest {
+                                from: pred,
+                                to: block,
+                                alloc,
+                            })
                     }
 
                     block = block.next();
@@ -397,7 +408,7 @@ impl<'a, F: Function> Env<'a, F> {
                     let operand = usedata.operand;
                     self.set_alloc(inst, slot as usize, alloc);
                     if let OperandConstraint::Reuse(_) = operand.constraint() {
-                        reuse_input_insts.push(inst);
+                        move_ctx.reuse_input_insts.push(inst);
                     }
                 }
 
@@ -450,15 +461,18 @@ impl<'a, F: Function> Env<'a, F> {
                 }
             }
 
-            if !inter_block_dests.is_empty() {
-                self.ctx.output.stats.halfmoves_count += inter_block_dests.len() * 2;
+            if !move_ctx.inter_block_dests.is_empty() {
+                self.ctx.output.stats.halfmoves_count += move_ctx.inter_block_dests.len() * 2;
 
-                inter_block_dests.sort_unstable_by_key(InterBlockDest::key);
+                self.ctx
+                    .scratch_moves
+                    .inter_block_dests
+                    .sort_unstable_by_key(InterBlockDest::key);
 
                 let vreg = self.vreg(vreg);
                 trace!("processing inter-block moves for {}", vreg);
-                for dest in inter_block_dests.drain(..) {
-                    let src = inter_block_sources[&dest.from];
+                for dest in move_ctx.inter_block_dests.drain(..) {
+                    let src = move_ctx.inter_block_sources[&dest.from];
 
                     trace!(
                         " -> moving from {} to {} between {:?} and {:?}",
@@ -476,21 +490,22 @@ impl<'a, F: Function> Env<'a, F> {
             blockparam_in_idx = prev.blockparam_ins_idx();
         }
 
-        if !block_param_dests.is_empty() {
-            self.ctx.output.stats.halfmoves_count += block_param_sources.len();
-            self.ctx.output.stats.halfmoves_count += block_param_dests.len();
+        if !move_ctx.block_param_dests.is_empty() {
+            self.ctx.output.stats.halfmoves_count += move_ctx.block_param_sources.len();
+            self.ctx.output.stats.halfmoves_count += move_ctx.block_param_dests.len();
 
             trace!("processing block-param moves");
-            for dest in block_param_dests {
+            for dest in move_ctx.block_param_dests.drain(..) {
                 let src = dest.source();
-                let src_alloc = block_param_sources.get(&src).unwrap();
+                let src_alloc = move_ctx.block_param_sources.get(&src).unwrap();
                 let (pos, prio) = choose_move_location(self, dest.from_block, dest.to_block);
                 inserted_moves.push(pos, prio, *src_alloc, dest.alloc, self.vreg(dest.to_vreg));
             }
         }
 
         // Handle multi-fixed-reg constraints by copying.
-        for fixup in core::mem::replace(&mut self.ctx.multi_fixed_reg_fixups, vec![]) {
+        let mut fixups = core::mem::take(&mut self.ctx.multi_fixed_reg_fixups);
+        for fixup in fixups.drain(..) {
             let from_alloc = self.get_alloc(fixup.pos.inst(), fixup.from_slot as usize);
             let to_alloc = Allocation::reg(PReg::from_index(fixup.to_preg.index()));
             trace!(
@@ -511,6 +526,7 @@ impl<'a, F: Function> Env<'a, F> {
                 Allocation::reg(PReg::from_index(fixup.to_preg.index())),
             );
         }
+        self.ctx.multi_fixed_reg_fixups = fixups;
 
         // Handle outputs that reuse inputs: copy beforehand, then set
         // input's alloc to output's.
@@ -556,7 +572,7 @@ impl<'a, F: Function> Env<'a, F> {
         // move instruction.
         //
         // [0] https://searchfox.org/mozilla-central/rev/3a798ef9252896fb389679f06dd3203169565af0/js/src/jit/shared/Lowering-shared-inl.h#108-110
-        for inst in reuse_input_insts {
+        for inst in move_ctx.reuse_input_insts.drain(..) {
             let mut input_reused: SmallVec<[usize; 4]> = smallvec![];
             for output_idx in 0..self.func.inst_operands(inst).len() {
                 let operand = self.func.inst_operands(inst)[output_idx];
@@ -599,6 +615,8 @@ impl<'a, F: Function> Env<'a, F> {
         // Sort the debug-locations vector; we provide this
         // invariant to the client.
         self.ctx.output.debug_locations.sort_unstable();
+
+        self.ctx.scratch_moves = move_ctx;
 
         inserted_moves
     }
