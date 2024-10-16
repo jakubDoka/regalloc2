@@ -488,6 +488,10 @@ pub struct Ctx {
     pub(crate) scratch_removed_lrs_vregs: FxHashSet<VRegIndex>,
     pub(crate) scratch_workqueue_set: FxHashSet<Block>,
 
+    pub(crate) scratch_new_lrs: Vec<(VRegIndex, LiveRangeIndex)>,
+    pub(crate) scratch_new_bundles: Vec<LiveBundleIndex>,
+    pub(crate) scratch_spill_uses: Vec<Use>,
+
     pub(crate) scratch_moves: MoveCtx,
 
     pub(crate) scratch_bump: Bump,

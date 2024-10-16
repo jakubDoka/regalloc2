@@ -18,9 +18,12 @@ use super::{
     Requirement, SpillWeight, UseList, VRegIndex,
 };
 use crate::{
-    ion::data_structures::{
-        CodeRange, BUNDLE_MAX_NORMAL_SPILL_WEIGHT, MAX_SPLITS_PER_SPILLSET,
-        MINIMAL_BUNDLE_SPILL_WEIGHT, MINIMAL_FIXED_BUNDLE_SPILL_WEIGHT,
+    ion::{
+        data_structures::{
+            CodeRange, BUNDLE_MAX_NORMAL_SPILL_WEIGHT, MAX_SPLITS_PER_SPILLSET,
+            MINIMAL_BUNDLE_SPILL_WEIGHT, MINIMAL_FIXED_BUNDLE_SPILL_WEIGHT,
+        },
+        Use,
     },
     Allocation, Function, Inst, InstPosition, OperandConstraint, OperandKind, PReg, ProgPoint,
     RegAllocError,
@@ -783,11 +786,11 @@ impl<'a, F: Function> Env<'a, F> {
     /// registers just at uses/defs and moves the "spilled" value
     /// into/out of them immediately.
     pub fn split_into_minimal_bundles(&mut self, bundle: LiveBundleIndex, reg_hint: PReg) {
-        assert_eq!(self.ctx.scratch_removed_lrs_vregs.len(), 0);
+        debug_assert_eq!(self.ctx.scratch_removed_lrs_vregs.len(), 0);
+        debug_assert_eq!(self.ctx.scratch_new_lrs.len(), 0);
+        debug_assert_eq!(self.ctx.scratch_new_bundles.len(), 0);
+        debug_assert_eq!(self.ctx.scratch_spill_uses.len(), 0);
         self.ctx.scratch_removed_lrs.clear();
-
-        let mut new_lrs: SmallVec<[(VRegIndex, LiveRangeIndex); 16]> = smallvec![];
-        let mut new_bundles: SmallVec<[LiveBundleIndex; 16]> = smallvec![];
 
         let spillset = self.ctx.bundles[bundle].spillset;
         let spill = self
@@ -804,8 +807,6 @@ impl<'a, F: Function> Env<'a, F> {
         let mut last_bundle: Option<LiveBundleIndex> = None;
         let mut last_inst: Option<Inst> = None;
         let mut last_vreg: Option<VRegIndex> = None;
-
-        let mut spill_uses = UseList::new_in(self.ctx.bump());
 
         let empty_vec = LiveRangeList::new_in(self.ctx.bump());
         for entry in core::mem::replace(&mut self.ctx.bundles[bundle].ranges, empty_vec) {
@@ -835,7 +836,7 @@ impl<'a, F: Function> Env<'a, F> {
                 // register, more strict requirements, so we delay them eagerly.
                 if u.operand.constraint() == OperandConstraint::Any {
                     trace!("    -> migrating this any-constrained use to the spill range");
-                    spill_uses.push(u);
+                    self.ctx.scratch_spill_uses.push(u);
 
                     // Remember if we're moving the def of this vreg into the spill range, so that
                     // we can set the appropriate flags on it later.
@@ -871,7 +872,7 @@ impl<'a, F: Function> Env<'a, F> {
                 if Some(u.pos.inst()) == last_inst {
                     let cr = CodeRange { from: u.pos, to };
                     let lr = self.ctx.ranges.add(cr, self.ctx.bump());
-                    new_lrs.push((vreg, lr));
+                    self.ctx.scratch_new_lrs.push((vreg, lr));
                     self.ctx.ranges[lr].uses.push(u);
                     self.ctx.ranges[lr].vreg = vreg;
 
@@ -905,7 +906,7 @@ impl<'a, F: Function> Env<'a, F> {
                 let pos = core::cmp::max(lr_from, pos);
                 let cr = CodeRange { from: pos, to };
                 let lr = self.ctx.ranges.add(cr, self.ctx.bump());
-                new_lrs.push((vreg, lr));
+                self.ctx.scratch_new_lrs.push((vreg, lr));
                 self.ctx.ranges[lr].uses.push(u);
                 self.ctx.ranges[lr].vreg = vreg;
 
@@ -919,7 +920,7 @@ impl<'a, F: Function> Env<'a, F> {
                         range: cr,
                         index: lr,
                     });
-                new_bundles.push(new_bundle);
+                self.ctx.scratch_new_bundles.push(new_bundle);
 
                 // If this use was a Def, set the StartsAtDef flag for the new LR.
                 if is_def {
@@ -948,8 +949,10 @@ impl<'a, F: Function> Env<'a, F> {
                 let spill_lr = self.ctx.ranges.add(spill_range, self.ctx.bump());
                 self.ctx.ranges[spill_lr].vreg = vreg;
                 self.ctx.ranges[spill_lr].bundle = spill;
-                self.ctx.ranges[spill_lr].uses.extend(spill_uses.drain(..));
-                new_lrs.push((vreg, spill_lr));
+                self.ctx.ranges[spill_lr]
+                    .uses
+                    .extend(self.ctx.scratch_spill_uses.drain(..));
+                self.ctx.scratch_new_lrs.push((vreg, spill_lr));
 
                 if spill_starts_def {
                     self.ctx.ranges[spill_lr].set_flag(LiveRangeFlag::StartsAtDef);
@@ -967,7 +970,7 @@ impl<'a, F: Function> Env<'a, F> {
                     spill
                 );
             } else {
-                assert!(spill_uses.is_empty());
+                assert!(self.ctx.scratch_spill_uses.is_empty());
             }
         }
 
@@ -980,7 +983,7 @@ impl<'a, F: Function> Env<'a, F> {
         }
 
         // Add the new LRs to their respective vreg lists.
-        for (vreg, lr) in new_lrs {
+        for (vreg, lr) in self.ctx.scratch_new_lrs.drain(..) {
             let range = self.ctx.ranges[lr].range;
             let entry = LiveRangeListEntry { range, index: lr };
             self.ctx.vregs[vreg].ranges.push(entry);
@@ -988,7 +991,8 @@ impl<'a, F: Function> Env<'a, F> {
 
         // Recompute bundle properties for all new bundles and enqueue
         // them.
-        for bundle in new_bundles {
+        let mut new_bundles = core::mem::take(&mut self.ctx.scratch_new_bundles);
+        for bundle in new_bundles.drain(..) {
             if self.ctx.bundles[bundle].ranges.len() > 0 {
                 self.recompute_bundle_properties(bundle);
                 let prio = self.ctx.bundles[bundle].prio;
@@ -997,6 +1001,7 @@ impl<'a, F: Function> Env<'a, F> {
                     .insert(bundle, prio as usize, reg_hint);
             }
         }
+        self.ctx.scratch_new_bundles = new_bundles;
     }
 
     pub fn process_bundle(
