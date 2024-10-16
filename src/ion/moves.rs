@@ -630,6 +630,7 @@ impl<'a, F: Function> Env<'a, F> {
         // Redundant-move elimination state tracker.
         let mut redundant_moves =
             core::mem::take(&mut self.ctx.scratch_moves.redundant_move_eliminator);
+        redundant_moves.clear();
 
         fn redundant_move_process_side_effects<'a, F: Function>(
             this: &Env<'a, F>,
@@ -860,6 +861,7 @@ impl<'a, F: Function> Env<'a, F> {
         }
 
         self.ctx.scratch_moves.redundant_move_eliminator = redundant_moves;
+        inserted_moves.moves.clear();
         self.ctx.scratch_moves.inserted_moves = inserted_moves;
 
         edits
