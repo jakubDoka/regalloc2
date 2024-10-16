@@ -103,7 +103,7 @@ impl<'a, F: Function> Env<'a, F> {
     pub fn requirement_from_operand(&self, op: Operand) -> Requirement {
         match op.constraint() {
             OperandConstraint::FixedReg(preg) => {
-                if self.pregs[preg.index()].is_stack {
+                if self.ctx.pregs[preg.index()].is_stack {
                     Requirement::FixedStack(preg)
                 } else {
                     Requirement::FixedReg(preg)

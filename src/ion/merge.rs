@@ -139,7 +139,7 @@ impl<'a, F: Function> Env<'a, F> {
             for entry in &list {
                 self.ranges[entry.index].bundle = to;
 
-                if self.annotations_enabled {
+                if self.ctx.annotations_enabled {
                     self.annotate(
                         entry.range.from,
                         format!(
@@ -184,7 +184,7 @@ impl<'a, F: Function> Env<'a, F> {
             .ranges
             .sort_unstable_by_key(|entry| entry.range.from);
 
-        if self.annotations_enabled {
+        if self.ctx.annotations_enabled {
             trace!("merging: merged = {:?}", self.bundles[to].ranges);
             let mut last_range = None;
             for i in 0..self.bundles[to].ranges.len() {
@@ -366,6 +366,6 @@ impl<'a, F: Function> Env<'a, F> {
             self.allocation_queue
                 .insert(bundle, prio as usize, PReg::invalid());
         }
-        self.output.stats.merged_bundle_count = self.allocation_queue.heap.len();
+        self.ctx.output.stats.merged_bundle_count = self.allocation_queue.heap.len();
     }
 }

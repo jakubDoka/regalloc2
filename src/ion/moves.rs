@@ -303,7 +303,7 @@ impl<'a, F: Function> Env<'a, F> {
                 );
                 debug_assert!(alloc != Allocation::none());
 
-                if self.annotations_enabled {
+                if self.ctx.annotations_enabled {
                     self.annotate(
                         range.from,
                         format!(
@@ -442,7 +442,7 @@ impl<'a, F: Function> Env<'a, F> {
                                 }
                             }
 
-                            if self.annotations_enabled {
+                            if self.ctx.annotations_enabled {
                                 self.annotate(
                                     self.cfginfo.block_exit[block.index()],
                                     format!(
@@ -508,7 +508,7 @@ impl<'a, F: Function> Env<'a, F> {
                                 alloc,
                             );
                             #[cfg(debug_assertions)]
-                            if self.annotations_enabled {
+                            if self.ctx.annotations_enabled {
                                 self.annotate(
                                     self.cfginfo.block_entry[block.index()],
                                     format!(
@@ -623,7 +623,7 @@ impl<'a, F: Function> Env<'a, F> {
             }
 
             if !inter_block_dests.is_empty() {
-                self.output.stats.halfmoves_count += inter_block_dests.len() * 2;
+                self.ctx.output.stats.halfmoves_count += inter_block_dests.len() * 2;
 
                 inter_block_dests.sort_unstable_by_key(InterBlockDest::key);
 
@@ -649,8 +649,8 @@ impl<'a, F: Function> Env<'a, F> {
         }
 
         if !block_param_dests.is_empty() {
-            self.output.stats.halfmoves_count += block_param_sources.len();
-            self.output.stats.halfmoves_count += block_param_dests.len();
+            self.ctx.output.stats.halfmoves_count += block_param_sources.len();
+            self.ctx.output.stats.halfmoves_count += block_param_dests.len();
 
             trace!("processing block-param moves");
             for dest in block_param_dests {
@@ -748,7 +748,7 @@ impl<'a, F: Function> Env<'a, F> {
                     );
                     if input_alloc != output_alloc {
                         #[cfg(debug_assertions)]
-                        if self.annotations_enabled {
+                        if self.ctx.annotations_enabled {
                             self.annotate(
                                 ProgPoint::before(inst),
                                 format!(" reuse-input-copy: {} -> {}", input_alloc, output_alloc),
@@ -770,7 +770,7 @@ impl<'a, F: Function> Env<'a, F> {
 
         // Sort the debug-locations vector; we provide this
         // invariant to the client.
-        self.output.debug_locations.sort_unstable();
+        self.ctx.output.debug_locations.sort_unstable();
 
         inserted_moves
     }
@@ -793,8 +793,8 @@ impl<'a, F: Function> Env<'a, F> {
             to: ProgPoint,
         ) {
             // If we cross a block boundary, clear and return.
-            if this.cfginfo.insn_block[from.inst().index()]
-                != this.cfginfo.insn_block[to.inst().index()]
+            if this.ctx.cfginfo.insn_block[from.inst().index()]
+                != this.ctx.cfginfo.insn_block[to.inst().index()]
             {
                 redundant_moves.clear();
                 return;
@@ -912,7 +912,7 @@ impl<'a, F: Function> Env<'a, F> {
                         return Some(Allocation::reg(reg));
                     }
                     while let Some(preg) = scratch_iter.next() {
-                        if !self.pregs[preg.index()]
+                        if !self.ctx.pregs[preg.index()]
                             .allocations
                             .btree
                             .contains_key(&key)
@@ -947,7 +947,7 @@ impl<'a, F: Function> Env<'a, F> {
                 };
                 let is_stack_alloc = |alloc: Allocation| {
                     if let Some(preg) = alloc.as_reg() {
-                        self.pregs[preg.index()].is_stack
+                        self.ctx.pregs[preg.index()].is_stack
                     } else {
                         alloc.is_stack()
                     }
@@ -965,14 +965,14 @@ impl<'a, F: Function> Env<'a, F> {
 
                 let mut rewrites = FxHashMap::default();
                 for i in 0..stackslot_idx {
-                    if i >= self.extra_spillslots_by_class[regclass as usize].len() {
+                    if i >= self.ctx.extra_spillslots_by_class[regclass as usize].len() {
                         let slot =
                             self.allocate_spillslot(self.func.spillslot_size(regclass) as u32);
-                        self.extra_spillslots_by_class[regclass as usize].push(slot);
+                        self.ctx.extra_spillslots_by_class[regclass as usize].push(slot);
                     }
                     rewrites.insert(
                         Allocation::stack(SpillSlot::new(SpillSlot::MAX - i)),
-                        self.extra_spillslots_by_class[regclass as usize][i],
+                        self.ctx.extra_spillslots_by_class[regclass as usize][i],
                     );
                 }
 
@@ -995,10 +995,10 @@ impl<'a, F: Function> Env<'a, F> {
         // parallel-move resolver for all moves within a single sort
         // key.
         edits.sort();
-        self.output.stats.edits_count = edits.len();
+        self.ctx.output.stats.edits_count = edits.len();
 
         // Add debug annotations.
-        if self.annotations_enabled {
+        if self.ctx.annotations_enabled {
             for &(pos_prio, ref edit) in edits.iter() {
                 match edit {
                     &Edit::Move { from, to } => {

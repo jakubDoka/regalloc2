@@ -97,7 +97,7 @@ impl core::ops::Add<SpillWeight> for SpillWeight {
 impl<'a, F: Function> Env<'a, F> {
     pub fn create_pregs_and_vregs(&mut self) {
         // Create PRegs from the env.
-        self.pregs.resize(
+        self.ctx.pregs.resize(
             PReg::NUM_INDEX,
             PRegData {
                 allocations: LiveRangeSet::new(),
@@ -105,7 +105,7 @@ impl<'a, F: Function> Env<'a, F> {
             },
         );
         for &preg in &self.env.fixed_stack_slots {
-            self.pregs[preg.index()].is_stack = true;
+            self.ctx.pregs[preg.index()].is_stack = true;
         }
         for class in 0..self.preferred_victim_by_class.len() {
             self.preferred_victim_by_class[class] = self.env.non_preferred_regs_by_class[class]
@@ -129,10 +129,10 @@ impl<'a, F: Function> Env<'a, F> {
         }
         // Create allocations too.
         for inst in 0..self.func.num_insts() {
-            let start = self.output.allocs.len() as u32;
-            self.output.inst_alloc_offsets.push(start);
+            let start = self.ctx.output.allocs.len() as u32;
+            self.ctx.output.inst_alloc_offsets.push(start);
             for _ in 0..self.func.inst_operands(Inst::new(inst)).len() {
-                self.output.allocs.push(Allocation::none());
+                self.ctx.output.allocs.push(Allocation::none());
             }
         }
     }
@@ -257,7 +257,7 @@ impl<'a, F: Function> Env<'a, F> {
     pub fn add_liverange_to_preg(&mut self, range: CodeRange, reg: PReg) {
         trace!("adding liverange to preg: {:?} to {}", range, reg);
         let preg_idx = PRegIndex::new(reg.index());
-        let res = self.pregs[preg_idx.index()]
+        let res = self.ctx.pregs[preg_idx.index()]
             .allocations
             .btree
             .insert(LiveRangeKey::from_range(&range), LiveRangeIndex::invalid());
@@ -292,7 +292,7 @@ impl<'a, F: Function> Env<'a, F> {
 
             trace!("computing liveins for block{}", block.index());
 
-            self.output.stats.livein_iterations += 1;
+            self.ctx.output.stats.livein_iterations += 1;
 
             let mut live = self.liveouts[block.index()].clone();
             trace!(" -> initial liveout set: {:?}", live);
@@ -383,7 +383,7 @@ impl<'a, F: Function> Env<'a, F> {
             let block = Block::new(i);
             let insns = self.func.block_insns(block);
 
-            self.output.stats.livein_blocks += 1;
+            self.ctx.output.stats.livein_blocks += 1;
 
             // Init our local live-in set.
             let mut live = self.liveouts[block.index()].clone();
@@ -751,9 +751,9 @@ impl<'a, F: Function> Env<'a, F> {
         self.blockparam_ins.sort_unstable_by_key(|x| x.key());
         self.blockparam_outs.sort_unstable_by_key(|x| x.key());
 
-        self.output.stats.initial_liverange_count = self.ranges.len();
-        self.output.stats.blockparam_ins_count = self.blockparam_ins.len();
-        self.output.stats.blockparam_outs_count = self.blockparam_outs.len();
+        self.ctx.output.stats.initial_liverange_count = self.ranges.len();
+        self.ctx.output.stats.blockparam_ins_count = self.blockparam_ins.len();
+        self.ctx.output.stats.blockparam_outs_count = self.blockparam_outs.len();
         self.ctx.scratch_vreg_ranges = vreg_ranges;
         self.ctx.scratch_operand_rewrites = operand_rewrites;
     }

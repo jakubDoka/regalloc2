@@ -55,7 +55,7 @@ impl<'a, F: Function> Env<'a, F> {
     }
 
     pub fn annotate(&mut self, progpoint: ProgPoint, s: String) {
-        if self.annotations_enabled {
+        if self.ctx.annotations_enabled {
             self.debug_annotations
                 .entry(progpoint)
                 .or_insert_with(|| vec![])
