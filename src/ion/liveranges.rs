@@ -107,8 +107,8 @@ impl<'a, F: Function> Env<'a, F> {
         for &preg in &self.env.fixed_stack_slots {
             self.ctx.pregs[preg.index()].is_stack = true;
         }
-        for class in 0..self.preferred_victim_by_class.len() {
-            self.preferred_victim_by_class[class] = self.env.non_preferred_regs_by_class[class]
+        for class in 0..self.ctx.preferred_victim_by_class.len() {
+            self.ctx.preferred_victim_by_class[class] = self.env.non_preferred_regs_by_class[class]
                 .last()
                 .or(self.env.preferred_regs_by_class[class].last())
                 .cloned()
@@ -158,8 +158,8 @@ impl<'a, F: Function> Env<'a, F> {
         // array, then reverse them at the end of
         // `compute_liveness()`.
 
-        if !self.vregs[vreg].ranges.is_empty() {
-            let last_range_index = self.vregs[vreg].ranges.last().unwrap().index;
+        if !self.ctx.vregs[vreg].ranges.is_empty() {
+            let last_range_index = self.ctx.vregs[vreg].ranges.last().unwrap().index;
             let last_range = self.ctx.ranges[last_range_index].range;
             if self.func.allow_multiple_vreg_defs() {
                 if last_range.contains(&range) {
@@ -183,9 +183,9 @@ impl<'a, F: Function> Env<'a, F> {
             );
         }
 
-        if self.vregs[vreg].ranges.is_empty()
+        if self.ctx.vregs[vreg].ranges.is_empty()
             || range.to
-                < self.ctx.ranges[self.vregs[vreg].ranges.last().unwrap().index]
+                < self.ctx.ranges[self.ctx.vregs[vreg].ranges.last().unwrap().index]
                     .range
                     .from
         {
@@ -193,14 +193,14 @@ impl<'a, F: Function> Env<'a, F> {
             // following) range; create a new range.
             let lr = self.ctx.ranges.add(range, self.ctx.bump());
             self.ctx.ranges[lr].vreg = vreg;
-            self.vregs[vreg]
+            self.ctx.vregs[vreg]
                 .ranges
                 .push(LiveRangeListEntry { range, index: lr });
             lr
         } else {
             // Is contiguous with previously-added range; just extend
             // its range and return it.
-            let lr = self.vregs[vreg].ranges.last().unwrap().index;
+            let lr = self.ctx.vregs[vreg].ranges.last().unwrap().index;
             debug_assert!(range.to == self.ctx.ranges[lr].range.from);
             self.ctx.ranges[lr].range.from = range.from;
             lr
@@ -246,7 +246,7 @@ impl<'a, F: Function> Env<'a, F> {
         vreg: VRegIndex,
         pos: ProgPoint,
     ) -> Option<LiveRangeIndex> {
-        for entry in &self.vregs[vreg].ranges {
+        for entry in &self.ctx.vregs[vreg].ranges {
             if entry.range.contains_point(pos) {
                 return Some(entry.index);
             }
@@ -265,14 +265,14 @@ impl<'a, F: Function> Env<'a, F> {
     }
 
     pub fn is_live_in(&mut self, block: Block, vreg: VRegIndex) -> bool {
-        self.liveins[block.index()].get(vreg.index())
+        self.ctx.liveins[block.index()].get(vreg.index())
     }
 
     pub fn compute_liveness(&mut self) -> Result<(), RegAllocError> {
         // Create initial LiveIn and LiveOut bitsets.
         for _ in 0..self.func.num_blocks() {
-            self.liveins.push(IndexSet::new());
-            self.liveouts.push(IndexSet::new());
+            self.ctx.liveins.push(IndexSet::new());
+            self.ctx.liveouts.push(IndexSet::new());
         }
 
         // Run a worklist algorithm to precisely compute liveins and
@@ -294,7 +294,7 @@ impl<'a, F: Function> Env<'a, F> {
 
             self.ctx.output.stats.livein_iterations += 1;
 
-            let mut live = self.liveouts[block.index()].clone();
+            let mut live = self.ctx.liveouts[block.index()].clone();
             trace!(" -> initial liveout set: {:?}", live);
 
             // Include outgoing blockparams in the initial live set.
@@ -344,14 +344,14 @@ impl<'a, F: Function> Env<'a, F> {
             }
 
             trace!("computed liveins at block{}: {:?}", block.index(), live);
-            self.liveins[block.index()] = live;
+            self.ctx.liveins[block.index()] = live;
         }
 
         // Check that there are no liveins to the entry block.
-        if !self.liveins[self.func.entry_block().index()].is_empty() {
+        if !self.ctx.liveins[self.func.entry_block().index()].is_empty() {
             trace!(
                 "non-empty liveins to entry block: {:?}",
-                self.liveins[self.func.entry_block().index()]
+                self.ctx.liveins[self.func.entry_block().index()]
             );
             return Err(RegAllocError::EntryLivein);
         }
@@ -386,7 +386,7 @@ impl<'a, F: Function> Env<'a, F> {
             self.ctx.output.stats.livein_blocks += 1;
 
             // Init our local live-in set.
-            let mut live = self.liveouts[block.index()].clone();
+            let mut live = self.ctx.liveouts[block.index()].clone();
 
             // If the last instruction is a branch (rather than
             // return), create blockparam_out entries.
@@ -429,7 +429,7 @@ impl<'a, F: Function> Env<'a, F> {
 
             // Create vreg data for blockparams.
             for &param in self.func.block_params(block) {
-                self.vregs[param].blockparam = block;
+                self.ctx.vregs[param].blockparam = block;
             }
 
             // For each instruction, in reverse order, process
@@ -531,7 +531,7 @@ impl<'a, F: Function> Env<'a, F> {
                                         preg
                                     );
                                     let pos = ProgPoint::before(inst);
-                                    self.multi_fixed_reg_fixups.push(MultiFixedRegFixup {
+                                    self.ctx.multi_fixed_reg_fixups.push(MultiFixedRegFixup {
                                         pos,
                                         from_slot: i as u8,
                                         to_slot: i as u8,
@@ -769,10 +769,10 @@ impl<'a, F: Function> Env<'a, F> {
         // different bundles, which breaks invariants related to
         // disjoint ranges and bundles).
         let mut extra_clobbers: SmallVec<[(PReg, ProgPoint); 8]> = smallvec![];
-        for vreg in 0..self.vregs.len() {
+        for vreg in 0..self.ctx.vregs.len() {
             let vreg = VRegIndex::new(vreg);
-            for range_idx in 0..self.vregs[vreg].ranges.len() {
-                let entry = self.vregs[vreg].ranges[range_idx];
+            for range_idx in 0..self.ctx.vregs[vreg].ranges.len() {
+                let entry = self.ctx.vregs[vreg].ranges[range_idx];
                 let range = entry.index;
                 trace!("multi-fixed-reg cleanup: vreg {:?} range {:?}", vreg, range,);
 

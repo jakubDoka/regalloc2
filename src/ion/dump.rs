@@ -10,7 +10,7 @@ use crate::{Block, Function, ProgPoint};
 impl<'a, F: Function> Env<'a, F> {
     pub fn dump_state(&self) {
         trace!("Bundles:");
-        for (i, b) in self.bundles.iter().enumerate() {
+        for (i, b) in self.ctx.bundles.iter().enumerate() {
             trace!(
                 "bundle{}: spillset={:?} alloc={:?}",
                 i,
@@ -27,7 +27,7 @@ impl<'a, F: Function> Env<'a, F> {
             }
         }
         trace!("VRegs:");
-        for (i, v) in self.vregs.iter().enumerate() {
+        for (i, v) in self.ctx.vregs.iter().enumerate() {
             trace!("vreg{}:", i);
             for entry in &v.ranges {
                 trace!(
@@ -56,7 +56,8 @@ impl<'a, F: Function> Env<'a, F> {
 
     pub fn annotate(&mut self, progpoint: ProgPoint, s: String) {
         if self.ctx.annotations_enabled {
-            self.debug_annotations
+            self.ctx
+                .debug_annotations
                 .entry(progpoint)
                 .or_insert_with(|| vec![])
                 .push(s);
@@ -83,6 +84,7 @@ impl<'a, F: Function> Env<'a, F> {
             );
             for inst in self.func.block_insns(block).iter() {
                 for annotation in self
+                    .ctx
                     .debug_annotations
                     .get(&ProgPoint::before(inst))
                     .map(|v| &v[..])
@@ -130,6 +132,7 @@ impl<'a, F: Function> Env<'a, F> {
                     clobbers
                 );
                 for annotation in self
+                    .ctx
                     .debug_annotations
                     .get(&ProgPoint::after(inst))
                     .map(|v| &v[..])

@@ -277,7 +277,7 @@ impl<'a, F: Function> Env<'a, F> {
 
         let mut blockparam_in_idx = 0;
         let mut blockparam_out_idx = 0;
-        for vreg in 0..self.vregs.len() {
+        for vreg in 0..self.ctx.vregs.len() {
             let vreg = VRegIndex::new(vreg);
             if !self.is_vreg_used(vreg) {
                 continue;
@@ -290,8 +290,8 @@ impl<'a, F: Function> Env<'a, F> {
             // `blockparam_outs`, which are sorted by (block, vreg),
             // to fill in allocations.
             let mut prev = PrevBuffer::new(blockparam_in_idx);
-            for range_idx in 0..self.vregs[vreg].ranges.len() {
-                let entry = self.vregs[vreg].ranges[range_idx];
+            for range_idx in 0..self.ctx.vregs[vreg].ranges.len() {
+                let entry = self.ctx.vregs[vreg].ranges[range_idx];
                 let alloc = self.get_alloc_for_range(entry.index);
                 let range = entry.range;
                 trace!(
@@ -662,7 +662,7 @@ impl<'a, F: Function> Env<'a, F> {
         }
 
         // Handle multi-fixed-reg constraints by copying.
-        for fixup in core::mem::replace(&mut self.multi_fixed_reg_fixups, vec![]) {
+        for fixup in core::mem::replace(&mut self.ctx.multi_fixed_reg_fixups, vec![]) {
             let from_alloc = self.get_alloc(fixup.pos.inst(), fixup.from_slot as usize);
             let to_alloc = Allocation::reg(PReg::from_index(fixup.to_preg.index()));
             trace!(
@@ -952,7 +952,7 @@ impl<'a, F: Function> Env<'a, F> {
                         alloc.is_stack()
                     }
                 };
-                let preferred_victim = self.preferred_victim_by_class[regclass as usize];
+                let preferred_victim = self.ctx.preferred_victim_by_class[regclass as usize];
 
                 let scratch_resolver = MoveAndScratchResolver {
                     find_free_reg,

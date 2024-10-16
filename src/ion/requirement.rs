@@ -121,7 +121,7 @@ impl<'a, F: Function> Env<'a, F> {
         let mut req = Requirement::Any;
         let mut last_pos = ProgPoint::before(Inst::new(0));
         trace!("compute_requirement: {:?}", bundle);
-        let ranges = &self.bundles[bundle].ranges;
+        let ranges = &self.ctx.bundles[bundle].ranges;
         for entry in ranges {
             trace!(" -> LR {:?}: {:?}", entry.index, entry.range);
             for u in &self.ctx.ranges[entry.index].uses {

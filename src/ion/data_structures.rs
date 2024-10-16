@@ -27,7 +27,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt::Debug;
-use core::ops::{Deref, DerefMut};
 use smallvec::SmallVec;
 
 /// A range from `from` (inclusive) to `to` (exclusive).
@@ -507,7 +506,7 @@ impl<'a, F: Function> Env<'a, F> {
     /// Get the VReg (with bundled RegClass) from a vreg index.
     #[inline]
     pub fn vreg(&self, index: VRegIndex) -> VReg {
-        let class = self.vregs[index]
+        let class = self.ctx.vregs[index]
             .class
             .expect("trying to get a VReg before observing its class");
         VReg::new(index.index(), class)
@@ -516,7 +515,7 @@ impl<'a, F: Function> Env<'a, F> {
     /// Record the class of a VReg. We learn this only when we observe
     /// the VRegs in use.
     pub fn observe_vreg_class(&mut self, vreg: VReg) {
-        let old_class = self.vregs[vreg].class.replace(vreg.class());
+        let old_class = self.ctx.vregs[vreg].class.replace(vreg.class());
         // We should never observe two different classes for two
         // mentions of a VReg in the source program.
         debug_assert!(old_class == None || old_class == Some(vreg.class()));
@@ -524,7 +523,7 @@ impl<'a, F: Function> Env<'a, F> {
 
     /// Is this vreg actually used in the source program?
     pub fn is_vreg_used(&self, index: VRegIndex) -> bool {
-        self.vregs[index].class.is_some()
+        self.ctx.vregs[index].class.is_some()
     }
 }
 

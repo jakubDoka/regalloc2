@@ -43,8 +43,8 @@ impl<'a, F: Function> Env<'a, F> {
             self.process_bundle(bundle, reg_hint)?;
         }
         self.ctx.output.stats.final_liverange_count = self.ctx.ranges.len();
-        self.ctx.output.stats.final_bundle_count = self.bundles.len();
-        self.ctx.output.stats.spill_bundle_count = self.spilled_bundles.len();
+        self.ctx.output.stats.final_bundle_count = self.ctx.bundles.len();
+        self.ctx.output.stats.spill_bundle_count = self.ctx.spilled_bundles.len();
 
         Ok(())
     }
@@ -1004,12 +1004,12 @@ impl<'a, F: Function> Env<'a, F> {
         bundle: LiveBundleIndex,
         reg_hint: PReg,
     ) -> Result<(), RegAllocError> {
-        let class = self.ctx.spillsets[self.bundles[bundle].spillset].class;
+        let class = self.ctx.spillsets[self.ctx.bundles[bundle].spillset].class;
         // Grab a hint from either the queue or our spillset, if any.
         let mut hint_reg = if reg_hint != PReg::invalid() {
             reg_hint
         } else {
-            self.ctx.spillsets[self.bundles[bundle].spillset].reg_hint
+            self.ctx.spillsets[self.ctx.bundles[bundle].spillset].reg_hint
         };
         if self.ctx.pregs[hint_reg.index()].is_stack {
             hint_reg = PReg::invalid();
@@ -1091,7 +1091,7 @@ impl<'a, F: Function> Env<'a, F> {
             // location in the code and by the bundle we're
             // considering. This has the effect of spreading
             // demand more evenly across registers.
-            let scan_offset = self.ctx.ranges[self.bundles[bundle].ranges[0].index]
+            let scan_offset = self.ctx.ranges[self.ctx.bundles[bundle].ranges[0].index]
                 .range
                 .from
                 .inst()
