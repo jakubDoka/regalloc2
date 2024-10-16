@@ -383,14 +383,11 @@ impl<'a, F: Function> Env<'a, F> {
                             continue;
                         }
 
-                        self.ctx
-                            .scratch_moves
-                            .inter_block_dests
-                            .push(InterBlockDest {
-                                from: pred,
-                                to: block,
-                                alloc,
-                            })
+                        move_ctx.inter_block_dests.push(InterBlockDest {
+                            from: pred,
+                            to: block,
+                            alloc,
+                        })
                     }
 
                     block = block.next();
@@ -462,8 +459,7 @@ impl<'a, F: Function> Env<'a, F> {
             if !move_ctx.inter_block_dests.is_empty() {
                 self.ctx.output.stats.halfmoves_count += move_ctx.inter_block_dests.len() * 2;
 
-                self.ctx
-                    .scratch_moves
+                move_ctx
                     .inter_block_dests
                     .sort_unstable_by_key(InterBlockDest::key);
 
