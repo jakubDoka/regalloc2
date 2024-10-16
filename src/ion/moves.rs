@@ -12,8 +12,6 @@
 
 //! Move resolution.
 
-use alloc::vec;
-
 use super::{
     Env, InsertMovePrio, InsertedMove, InsertedMoves, LiveRangeFlag, LiveRangeIndex,
     RedundantMoveEliminator, VRegIndex,
@@ -78,7 +76,7 @@ impl<'a, F: Function> Env<'a, F> {
         trace!("blockparam_ins: {:?}", self.ctx.blockparam_ins);
         trace!("blockparam_outs: {:?}", self.ctx.blockparam_outs);
 
-        // We will return this back outside of this function.
+        // We will return this back outside of this function
         let mut inserted_moves = core::mem::take(&mut self.ctx.scratch_moves.inserted_moves);
 
         // Now that all splits are done, we can pay the cost once to
@@ -630,7 +628,8 @@ impl<'a, F: Function> Env<'a, F> {
             .sort_unstable_by_key(|m| m.pos_prio.key());
 
         // Redundant-move elimination state tracker.
-        let mut redundant_moves = RedundantMoveEliminator::default();
+        let mut redundant_moves =
+            core::mem::take(&mut self.ctx.scratch_moves.redundant_move_eliminator);
 
         fn redundant_move_process_side_effects<'a, F: Function>(
             this: &Env<'a, F>,
@@ -681,7 +680,13 @@ impl<'a, F: Function> Env<'a, F> {
         }
 
         let mut last_pos = ProgPoint::before(Inst::new(0));
-        let mut edits = Edits::with_capacity(self.func.num_insts());
+        // We return this back outside of this function.
+        let mut edits = core::mem::take(
+            self.ctx
+                .scratch_moves
+                .edits
+                .preallocate(self.func.num_insts()),
+        );
 
         while i < inserted_moves.moves.len() {
             let start = i;
@@ -854,18 +859,24 @@ impl<'a, F: Function> Env<'a, F> {
             }
         }
 
+        self.ctx.scratch_moves.redundant_move_eliminator = redundant_moves;
+        self.ctx.scratch_moves.inserted_moves = inserted_moves;
+
         edits
     }
 }
 
 #[derive(Default)]
-pub struct MovesCtx {
+pub struct MoveCtx {
     inserted_moves: InsertedMoves,
     inter_block_sources: FxHashMap<Block, Allocation>,
     inter_block_dests: Vec<InterBlockDest>,
     block_param_sources: FxHashMap<BlockparamSourceKey, Allocation>,
     block_param_dests: Vec<BlockparamDest>,
     reuse_input_insts: Vec<Inst>,
+
+    redundant_move_eliminator: RedundantMoveEliminator,
+    pub(crate) edits: Edits,
 }
 
 /// Buffered information about the previous liverange that was processed.

@@ -126,6 +126,7 @@ pub fn run<F: Function>(
     }
 
     ctx.output.edits.extend(edits.drain_edits());
+    ctx.scratch_moves.edits = edits;
 
     Ok(())
 }
