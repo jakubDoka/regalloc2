@@ -39,7 +39,7 @@ impl<'a, F: Function> Env<'a, F> {
             }
         }
         trace!("Ranges:");
-        for (i, r) in self.ranges.iter().enumerate() {
+        for (i, r) in self.ctx.ranges.iter().enumerate() {
             trace!(
                 "range{}: range={:?} vreg={:?} bundle={:?} weight={:?}",
                 i,

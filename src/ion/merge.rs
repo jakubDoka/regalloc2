@@ -52,11 +52,11 @@ impl<'a, F: Function> Env<'a, F> {
         {
             // Sanity check: both bundles should contain only ranges with appropriate VReg classes.
             for entry in &self.bundles[from].ranges {
-                let vreg = self.ranges[entry.index].vreg;
+                let vreg = self.ctx.ranges[entry.index].vreg;
                 debug_assert_eq!(from_rc, self.vreg(vreg).class());
             }
             for entry in &self.bundles[to].ranges {
-                let vreg = self.ranges[entry.index].vreg;
+                let vreg = self.ctx.ranges[entry.index].vreg;
                 debug_assert_eq!(to_rc, self.vreg(vreg).class());
             }
         }
@@ -137,7 +137,7 @@ impl<'a, F: Function> Env<'a, F> {
             let empty_vec = LiveRangeList::new_in(self.ctx.bump());
             let list = core::mem::replace(&mut self.bundles[from].ranges, empty_vec);
             for entry in &list {
-                self.ranges[entry.index].bundle = to;
+                self.ctx.ranges[entry.index].bundle = to;
 
                 if self.ctx.annotations_enabled {
                     self.annotate(
@@ -145,7 +145,7 @@ impl<'a, F: Function> Env<'a, F> {
                         format!(
                             " MERGE range{} v{} from bundle{} to bundle{}",
                             entry.index.index(),
-                            self.ranges[entry.index].vreg.index(),
+                            self.ctx.ranges[entry.index].vreg.index(),
                             from.index(),
                             to.index(),
                         ),
@@ -176,7 +176,7 @@ impl<'a, F: Function> Env<'a, F> {
         let empty_vec = LiveRangeList::new_in(self.ctx.bump());
         let from_list = core::mem::replace(&mut self.bundles[from].ranges, empty_vec);
         for entry in &from_list {
-            self.ranges[entry.index].bundle = to;
+            self.ctx.ranges[entry.index].bundle = to;
         }
 
         self.bundles[to].ranges.extend_from_slice(&from_list[..]);
@@ -194,13 +194,13 @@ impl<'a, F: Function> Env<'a, F> {
                 }
                 last_range = Some(entry.range);
 
-                if self.ranges[entry.index].bundle == from {
+                if self.ctx.ranges[entry.index].bundle == from {
                     self.annotate(
                         entry.range.from,
                         format!(
                             " MERGE range{} v{} from bundle{} to bundle{}",
                             entry.index.index(),
-                            self.ranges[entry.index].vreg.index(),
+                            self.ctx.ranges[entry.index].vreg.index(),
                             from.index(),
                             to.index(),
                         ),
@@ -259,7 +259,7 @@ impl<'a, F: Function> Env<'a, F> {
             let mut fixed = false;
             let mut fixed_def = false;
             for entry in &self.bundles[bundle].ranges {
-                for u in &self.ranges[entry.index].uses {
+                for u in &self.ctx.ranges[entry.index].uses {
                     if let OperandConstraint::FixedReg(_) = u.operand.constraint() {
                         fixed = true;
                         if u.operand.kind() == OperandKind::Def {
@@ -307,9 +307,9 @@ impl<'a, F: Function> Env<'a, F> {
                         src_vreg,
                         dst_vreg
                     );
-                    let src_bundle = self.ranges[self.vregs[src_vreg].ranges[0].index].bundle;
+                    let src_bundle = self.ctx.ranges[self.vregs[src_vreg].ranges[0].index].bundle;
                     debug_assert!(src_bundle.is_valid());
-                    let dest_bundle = self.ranges[self.vregs[dst_vreg].ranges[0].index].bundle;
+                    let dest_bundle = self.ctx.ranges[self.vregs[dst_vreg].ranges[0].index].bundle;
                     debug_assert!(dest_bundle.is_valid());
                     self.merge_bundles(/* from */ dest_bundle, /* to */ src_bundle);
                 }
@@ -317,18 +317,18 @@ impl<'a, F: Function> Env<'a, F> {
         }
 
         // Attempt to merge blockparams with their inputs.
-        for i in 0..self.blockparam_outs.len() {
+        for i in 0..self.ctx.blockparam_outs.len() {
             let BlockparamOut {
                 from_vreg, to_vreg, ..
-            } = self.blockparam_outs[i];
+            } = self.ctx.blockparam_outs[i];
             trace!(
                 "trying to merge blockparam v{} with input v{}",
                 to_vreg.index(),
                 from_vreg.index()
             );
-            let to_bundle = self.ranges[self.vregs[to_vreg].ranges[0].index].bundle;
+            let to_bundle = self.ctx.ranges[self.vregs[to_vreg].ranges[0].index].bundle;
             debug_assert!(to_bundle.is_valid());
-            let from_bundle = self.ranges[self.vregs[from_vreg].ranges[0].index].bundle;
+            let from_bundle = self.ctx.ranges[self.vregs[from_vreg].ranges[0].index].bundle;
             debug_assert!(from_bundle.is_valid());
             trace!(
                 " -> from bundle{} to bundle{}",

@@ -75,8 +75,8 @@ impl<'a, F: Function> Env<'a, F> {
 
     pub fn apply_allocations_and_insert_moves(&mut self) -> InsertedMoves {
         trace!("apply_allocations_and_insert_moves");
-        trace!("blockparam_ins: {:?}", self.blockparam_ins);
-        trace!("blockparam_outs: {:?}", self.blockparam_outs);
+        trace!("blockparam_ins: {:?}", self.ctx.blockparam_ins);
+        trace!("blockparam_outs: {:?}", self.ctx.blockparam_outs);
 
         let mut inserted_moves = InsertedMoves::default();
 
@@ -311,7 +311,7 @@ impl<'a, F: Function> Env<'a, F> {
                             vreg.index(),
                             alloc,
                             entry.index.index(),
-                            self.ranges[entry.index].bundle.raw_u32(),
+                            self.ctx.ranges[entry.index].bundle.raw_u32(),
                         ),
                     );
                     self.annotate(
@@ -321,7 +321,7 @@ impl<'a, F: Function> Env<'a, F> {
                             vreg.index(),
                             alloc,
                             entry.index.index(),
-                            self.ranges[entry.index].bundle.raw_u32(),
+                            self.ctx.ranges[entry.index].bundle.raw_u32(),
                         ),
                     );
                 }
@@ -354,7 +354,7 @@ impl<'a, F: Function> Env<'a, F> {
 
                     if prev.range.to >= range.from
                         && (prev.range.to > range.from || !self.is_start_of_block(range.from))
-                        && !self.ranges[entry.index].has_flag(LiveRangeFlag::StartsAtDef)
+                        && !self.ctx.ranges[entry.index].has_flag(LiveRangeFlag::StartsAtDef)
                     {
                         trace!(
                             "prev LR {} abuts LR {} in same block; moving {} -> {} for v{}",
@@ -380,9 +380,9 @@ impl<'a, F: Function> Env<'a, F> {
                 // already in this range (hence guaranteed to have the
                 // same allocation) and if the vreg is live, add a
                 // Source half-move.
-                let mut block = self.cfginfo.insn_block[range.from.inst().index()];
+                let mut block = self.ctx.cfginfo.insn_block[range.from.inst().index()];
                 while block.is_valid() && block.index() < self.func.num_blocks() {
-                    if range.to < self.cfginfo.block_exit[block.index()].next() {
+                    if range.to < self.ctx.cfginfo.block_exit[block.index()].next() {
                         break;
                     }
                     trace!("examining block with end in range: block{}", block.index());
@@ -409,13 +409,13 @@ impl<'a, F: Function> Env<'a, F> {
                         block.index(),
                         blockparam_out_idx,
                     );
-                    while blockparam_out_idx < self.blockparam_outs.len() {
+                    while blockparam_out_idx < self.ctx.blockparam_outs.len() {
                         let BlockparamOut {
                             from_vreg,
                             from_block,
                             to_block,
                             to_vreg,
-                        } = self.blockparam_outs[blockparam_out_idx];
+                        } = self.ctx.blockparam_outs[blockparam_out_idx];
                         if (from_vreg, from_block) > (vreg, block) {
                             break;
                         }
@@ -444,7 +444,7 @@ impl<'a, F: Function> Env<'a, F> {
 
                             if self.ctx.annotations_enabled {
                                 self.annotate(
-                                    self.cfginfo.block_exit[block.index()],
+                                    self.ctx.cfginfo.block_exit[block.index()],
                                     format!(
                                         "blockparam-out: block{} to block{}: v{} to v{} in {}",
                                         from_block.index(),
@@ -467,12 +467,12 @@ impl<'a, F: Function> Env<'a, F> {
                 // this range and for which the vreg is live at the
                 // start of the block. For each, for each predecessor,
                 // add a Dest half-move.
-                let mut block = self.cfginfo.insn_block[range.from.inst().index()];
-                if self.cfginfo.block_entry[block.index()] < range.from {
+                let mut block = self.ctx.cfginfo.insn_block[range.from.inst().index()];
+                if self.ctx.cfginfo.block_entry[block.index()] < range.from {
                     block = block.next();
                 }
                 while block.is_valid() && block.index() < self.func.num_blocks() {
-                    if self.cfginfo.block_entry[block.index()] >= range.to {
+                    if self.ctx.cfginfo.block_entry[block.index()] >= range.to {
                         break;
                     }
 
@@ -484,12 +484,12 @@ impl<'a, F: Function> Env<'a, F> {
                         prev.prev_ins_idx,
                     );
                     let mut idx = prev.blockparam_ins_idx();
-                    while idx < self.blockparam_ins.len() {
+                    while idx < self.ctx.blockparam_ins.len() {
                         let BlockparamIn {
                             from_block,
                             to_block,
                             to_vreg,
-                        } = self.blockparam_ins[idx];
+                        } = self.ctx.blockparam_ins[idx];
                         if (to_vreg, to_block) > (vreg, block) {
                             break;
                         }
@@ -510,7 +510,7 @@ impl<'a, F: Function> Env<'a, F> {
                             #[cfg(debug_assertions)]
                             if self.ctx.annotations_enabled {
                                 self.annotate(
-                                    self.cfginfo.block_entry[block.index()],
+                                    self.ctx.cfginfo.block_entry[block.index()],
                                     format!(
                                         "blockparam-in: block{} to block{}:into v{} in {}",
                                         from_block.index(),
@@ -543,9 +543,9 @@ impl<'a, F: Function> Env<'a, F> {
                         trace!(
                             "pred block {} has exit {:?}",
                             pred.index(),
-                            self.cfginfo.block_exit[pred.index()]
+                            self.ctx.cfginfo.block_exit[pred.index()]
                         );
-                        if range.contains_point(self.cfginfo.block_exit[pred.index()]) {
+                        if range.contains_point(self.ctx.cfginfo.block_exit[pred.index()]) {
                             continue;
                         }
 
@@ -560,8 +560,8 @@ impl<'a, F: Function> Env<'a, F> {
                 }
 
                 // Scan over def/uses and apply allocations.
-                for use_idx in 0..self.ranges[entry.index].uses.len() {
-                    let usedata = self.ranges[entry.index].uses[use_idx];
+                for use_idx in 0..self.ctx.ranges[entry.index].uses.len() {
+                    let usedata = self.ctx.ranges[entry.index].uses[use_idx];
                     trace!("applying to use: {:?}", usedata);
                     debug_assert!(range.contains_point(usedata.pos));
                     let inst = usedata.pos.inst();

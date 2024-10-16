@@ -160,7 +160,7 @@ impl<'a, F: Function> Env<'a, F> {
 
         if !self.vregs[vreg].ranges.is_empty() {
             let last_range_index = self.vregs[vreg].ranges.last().unwrap().index;
-            let last_range = self.ranges[last_range_index].range;
+            let last_range = self.ctx.ranges[last_range_index].range;
             if self.func.allow_multiple_vreg_defs() {
                 if last_range.contains(&range) {
                     // Special case (may occur when multiple defs of pinned
@@ -185,14 +185,14 @@ impl<'a, F: Function> Env<'a, F> {
 
         if self.vregs[vreg].ranges.is_empty()
             || range.to
-                < self.ranges[self.vregs[vreg].ranges.last().unwrap().index]
+                < self.ctx.ranges[self.vregs[vreg].ranges.last().unwrap().index]
                     .range
                     .from
         {
             // Is not contiguous with previously-added (immediately
             // following) range; create a new range.
             let lr = self.ctx.ranges.add(range, self.ctx.bump());
-            self.ranges[lr].vreg = vreg;
+            self.ctx.ranges[lr].vreg = vreg;
             self.vregs[vreg]
                 .ranges
                 .push(LiveRangeListEntry { range, index: lr });
@@ -201,8 +201,8 @@ impl<'a, F: Function> Env<'a, F> {
             // Is contiguous with previously-added range; just extend
             // its range and return it.
             let lr = self.vregs[vreg].ranges.last().unwrap().index;
-            debug_assert!(range.to == self.ranges[lr].range.from);
-            self.ranges[lr].range.from = range.from;
+            debug_assert!(range.to == self.ctx.ranges[lr].range.from);
+            self.ctx.ranges[lr].range.from = range.from;
             lr
         }
     }
@@ -210,8 +210,8 @@ impl<'a, F: Function> Env<'a, F> {
     pub fn insert_use_into_liverange(&mut self, into: LiveRangeIndex, mut u: Use) {
         let operand = u.operand;
         let constraint = operand.constraint();
-        let block = self.cfginfo.insn_block[u.pos.inst().index()];
-        let loop_depth = self.cfginfo.approx_loop_depth[block.index()] as usize;
+        let block = self.ctx.cfginfo.insn_block[u.pos.inst().index()];
+        let loop_depth = self.ctx.cfginfo.approx_loop_depth[block.index()] as usize;
         let weight = spill_weight_from_constraint(
             constraint,
             loop_depth,
@@ -230,14 +230,14 @@ impl<'a, F: Function> Env<'a, F> {
         // because those will be computed during the multi-fixed-reg
         // fixup pass later (after all uses are inserted).
 
-        self.ranges[into].uses.push(u);
+        self.ctx.ranges[into].uses.push(u);
 
         // Update stats.
-        let range_weight = self.ranges[into].uses_spill_weight() + weight;
-        self.ranges[into].set_uses_spill_weight(range_weight);
+        let range_weight = self.ctx.ranges[into].uses_spill_weight() + weight;
+        self.ctx.ranges[into].set_uses_spill_weight(range_weight);
         trace!(
             "  -> now range has weight {:?}",
-            self.ranges[into].uses_spill_weight(),
+            self.ctx.ranges[into].uses_spill_weight(),
         );
     }
 
@@ -281,7 +281,7 @@ impl<'a, F: Function> Env<'a, F> {
         let mut workqueue_set = core::mem::take(&mut self.ctx.scratch_workqueue_set);
         workqueue_set.clear();
         // Initialize workqueue with postorder traversal.
-        for &block in &self.cfginfo.postorder[..] {
+        for &block in &self.ctx.cfginfo.postorder[..] {
             workqueue.push_back(block);
             workqueue_set.insert(block);
         }
@@ -399,7 +399,7 @@ impl<'a, F: Function> Env<'a, F> {
                     {
                         let blockparam_out = VRegIndex::new(blockparam_out.vreg());
                         let blockparam_in = VRegIndex::new(blockparam_in.vreg());
-                        self.blockparam_outs.push(BlockparamOut {
+                        self.ctx.blockparam_outs.push(BlockparamOut {
                             to_vreg: blockparam_in,
                             to_block: succ,
                             from_block: block,
@@ -415,8 +415,8 @@ impl<'a, F: Function> Env<'a, F> {
             // Initially, registers are assumed live for the whole block.
             for vreg in live.iter() {
                 let range = CodeRange {
-                    from: self.cfginfo.block_entry[block.index()],
-                    to: self.cfginfo.block_exit[block.index()].next(),
+                    from: self.ctx.cfginfo.block_entry[block.index()],
+                    to: self.ctx.cfginfo.block_exit[block.index()].next(),
                 };
                 trace!(
                     "vreg {:?} live at end of block --> create range {:?}",
@@ -647,14 +647,14 @@ impl<'a, F: Function> Env<'a, F> {
                                     // start of this block (i.e. was not
                                     // merged into some larger LiveRange due
                                     // to out-of-order blocks).
-                                    if self.ranges[lr].range.from
-                                        == self.cfginfo.block_entry[block.index()]
+                                    if self.ctx.ranges[lr].range.from
+                                        == self.ctx.cfginfo.block_entry[block.index()]
                                     {
                                         trace!(" -> started at block start; trimming to {:?}", pos);
-                                        self.ranges[lr].range.from = pos;
+                                        self.ctx.ranges[lr].range.from = pos;
                                     }
 
-                                    self.ranges[lr].set_flag(LiveRangeFlag::StartsAtDef);
+                                    self.ctx.ranges[lr].set_flag(LiveRangeFlag::StartsAtDef);
 
                                     // Remove from live-set.
                                     live.set(operand.vreg().vreg(), false);
@@ -668,7 +668,7 @@ impl<'a, F: Function> Env<'a, F> {
                                 let mut lr = vreg_ranges[operand.vreg().vreg()];
                                 if !live.get(operand.vreg().vreg()) {
                                     let range = CodeRange {
-                                        from: self.cfginfo.block_entry[block.index()],
+                                        from: self.ctx.cfginfo.block_entry[block.index()],
                                         to: pos.next(),
                                     };
                                     lr = self.add_liverange_to_vreg(
@@ -699,7 +699,7 @@ impl<'a, F: Function> Env<'a, F> {
                     live.set(vreg.vreg(), false);
                 } else {
                     // Create trivial liverange if blockparam is dead.
-                    let start = self.cfginfo.block_entry[block.index()];
+                    let start = self.ctx.cfginfo.block_entry[block.index()];
                     self.add_liverange_to_vreg(
                         VRegIndex::new(vreg.vreg()),
                         CodeRange {
@@ -711,7 +711,7 @@ impl<'a, F: Function> Env<'a, F> {
                 // add `blockparam_ins` entries.
                 let vreg_idx = VRegIndex::new(vreg.vreg());
                 for &pred in self.func.block_preds(block) {
-                    self.blockparam_ins.push(BlockparamIn {
+                    self.ctx.blockparam_ins.push(BlockparamIn {
                         to_vreg: vreg_idx,
                         to_block: block,
                         from_block: pred,
@@ -743,17 +743,17 @@ impl<'a, F: Function> Env<'a, F> {
             }
         }
 
-        for range in &mut self.ranges {
+        for range in &mut self.ctx.ranges {
             range.uses.reverse();
             debug_assert!(range.uses.windows(2).all(|win| win[0].pos <= win[1].pos));
         }
 
-        self.blockparam_ins.sort_unstable_by_key(|x| x.key());
-        self.blockparam_outs.sort_unstable_by_key(|x| x.key());
+        self.ctx.blockparam_ins.sort_unstable_by_key(|x| x.key());
+        self.ctx.blockparam_outs.sort_unstable_by_key(|x| x.key());
 
-        self.ctx.output.stats.initial_liverange_count = self.ranges.len();
-        self.ctx.output.stats.blockparam_ins_count = self.blockparam_ins.len();
-        self.ctx.output.stats.blockparam_outs_count = self.blockparam_outs.len();
+        self.ctx.output.stats.initial_liverange_count = self.ctx.ranges.len();
+        self.ctx.output.stats.blockparam_ins_count = self.ctx.blockparam_ins.len();
+        self.ctx.output.stats.blockparam_outs_count = self.ctx.blockparam_outs.len();
         self.ctx.scratch_vreg_ranges = vreg_ranges;
         self.ctx.scratch_operand_rewrites = operand_rewrites;
     }

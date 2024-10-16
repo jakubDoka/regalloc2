@@ -42,7 +42,7 @@ impl<'a, F: Function> Env<'a, F> {
             self.ctx.output.stats.process_bundle_count += 1;
             self.process_bundle(bundle, reg_hint)?;
         }
-        self.ctx.output.stats.final_liverange_count = self.ranges.len();
+        self.ctx.output.stats.final_liverange_count = self.ctx.ranges.len();
         self.ctx.output.stats.final_bundle_count = self.bundles.len();
         self.ctx.output.stats.spill_bundle_count = self.spilled_bundles.len();
 
@@ -556,7 +556,7 @@ impl<'a, F: Function> Env<'a, F> {
                 },
                 self.ctx.bump(),
             );
-            self.ctx.ranges[new_lr].vreg = self.ranges[orig_lr].vreg;
+            self.ctx.ranges[new_lr].vreg = self.ctx.ranges[orig_lr].vreg;
             trace!(" -> splitting LR {:?} into {:?}", orig_lr, new_lr);
             let first_use = self.ctx.ranges[orig_lr]
                 .uses
@@ -1262,7 +1262,7 @@ impl<'a, F: Function> Env<'a, F> {
                                 break 'outer;
                             }
                             if lr.is_valid() {
-                                if self.minimal_bundle(self.ranges[*lr].bundle) {
+                                if self.minimal_bundle(self.ctx.ranges[*lr].bundle) {
                                     trace!("  -> min bundle {:?}", lr);
                                     min_bundles_assigned += 1;
                                 } else {
