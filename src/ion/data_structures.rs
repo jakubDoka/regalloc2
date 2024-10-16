@@ -13,6 +13,7 @@
 //! Data structures for backtracking allocator.
 
 use super::liveranges::SpillWeight;
+use super::moves::MovesCtx;
 use crate::cfg::{CFGInfo, CFGInfoCtx};
 use crate::index::ContainerComparator;
 use crate::indexset::IndexSet;
@@ -486,6 +487,8 @@ pub struct Ctx {
     pub(crate) scratch_removed_lrs: FxHashSet<LiveRangeIndex>,
     pub(crate) scratch_removed_lrs_vregs: FxHashSet<VRegIndex>,
     pub(crate) scratch_workqueue_set: FxHashSet<Block>,
+
+    pub(crate) scratch_moves: MovesCtx,
 
     pub(crate) scratch_bump: Bump,
 }

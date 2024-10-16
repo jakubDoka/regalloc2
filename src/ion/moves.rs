@@ -89,180 +89,8 @@ impl<'a, F: Function> Env<'a, F> {
             vreg.ranges.sort_unstable_by_key(|entry| entry.range.from);
         }
 
-        /// Buffered information about the previous liverange that was processed.
-        struct PrevBuffer {
-            prev: Option<LiveRangeListEntry>,
-            prev_ins_idx: usize,
-            buffered: Option<LiveRangeListEntry>,
-            buffered_ins_idx: usize,
-        }
-
-        impl PrevBuffer {
-            fn new(prev_ins_idx: usize) -> Self {
-                Self {
-                    prev: None,
-                    prev_ins_idx,
-                    buffered: None,
-                    buffered_ins_idx: prev_ins_idx,
-                }
-            }
-
-            /// Returns the previous `LiveRangeListEntry` when it's present.
-            #[inline(always)]
-            fn is_valid(&self) -> Option<LiveRangeListEntry> {
-                self.prev
-            }
-
-            /// Fetch the current index into the `Env::blockparam_ins` vector.
-            #[inline(always)]
-            fn blockparam_ins_idx(&self) -> usize {
-                self.prev_ins_idx
-            }
-
-            /// Record this index as the next index to use when the previous liverange buffer
-            /// anvances.
-            #[inline(always)]
-            fn update_blockparam_ins_idx(&mut self, idx: usize) {
-                self.buffered_ins_idx = idx;
-            }
-
-            /// As overlapping liveranges might start at the same program point, we buffer the
-            /// previous liverange used when determining where to take the last value from for
-            /// intra-block moves. The liveranges we process are buffered until we encounter one
-            /// that starts at a later program point, indicating that it's now safe to advance the
-            /// previous LR buffer. We accumulate the longest-lived liverange in the buffer as a
-            /// heuristic for finding the most stable source of a value.
-            ///
-            /// We also buffer the index into the `Env::blockparam_ins` vector, as we may see
-            /// multiple uses of a blockparam within a single instruction, and as such may need to
-            /// generate multiple blockparam move destinations by re-traversing that section of the
-            /// vector.
-            #[inline(always)]
-            fn advance(&mut self, current: LiveRangeListEntry) {
-                // Advance the `prev` pointer to the `next` pointer, as long as the `next` pointer
-                // does not start at the same time as the current LR we're processing.
-                if self
-                    .buffered
-                    .map(|entry| entry.range.from < current.range.from)
-                    .unwrap_or(false)
-                {
-                    self.prev = self.buffered;
-                    self.prev_ins_idx = self.buffered_ins_idx;
-                }
-
-                // Advance the `next` pointer to the currently processed LR, as long as it ends
-                // later than the current `next`.
-                if self
-                    .buffered
-                    .map(|entry| entry.range.to < current.range.to)
-                    .unwrap_or(true)
-                {
-                    self.buffered = Some(current);
-                }
-            }
-        }
-
-        // Determine the ProgPoint where moves on this (from, to)
-        // edge should go:
-        // - If there is more than one in-edge to `to`, then
-        //   `from` must have only one out-edge; moves go at tail of
-        //   `from` just before last Branch/Ret.
-        // - Otherwise, there must be at most one in-edge to `to`,
-        //   and moves go at start of `to`.
-        #[inline(always)]
-        fn choose_move_location<'a, F: Function>(
-            env: &Env<'a, F>,
-            from: Block,
-            to: Block,
-        ) -> (ProgPoint, InsertMovePrio) {
-            let from_last_insn = env.func.block_insns(from).last();
-            let to_first_insn = env.func.block_insns(to).first();
-            let from_is_ret = env.func.is_ret(from_last_insn);
-            let to_is_entry = env.func.entry_block() == to;
-            let from_outs = env.func.block_succs(from).len() + if from_is_ret { 1 } else { 0 };
-            let to_ins = env.func.block_preds(to).len() + if to_is_entry { 1 } else { 0 };
-
-            if to_ins > 1 && from_outs <= 1 {
-                (
-                    // N.B.: though semantically the edge moves happen
-                    // after the branch, we must insert them before
-                    // the branch because otherwise, of course, they
-                    // would never execute. This is correct even in
-                    // the presence of branches that read register
-                    // inputs (e.g. conditional branches on some RISCs
-                    // that branch on reg zero/not-zero, or any
-                    // indirect branch), but for a very subtle reason:
-                    // all cases of such branches will (or should)
-                    // have multiple successors, and thus due to
-                    // critical-edge splitting, their successors will
-                    // have only the single predecessor, and we prefer
-                    // to insert at the head of the successor in that
-                    // case (rather than here). We make this a
-                    // requirement, in fact: the user of this library
-                    // shall not read registers in a branch
-                    // instruction of there is only one successor per
-                    // the given CFG information.
-                    ProgPoint::before(from_last_insn),
-                    InsertMovePrio::OutEdgeMoves,
-                )
-            } else if to_ins <= 1 {
-                (
-                    ProgPoint::before(to_first_insn),
-                    InsertMovePrio::InEdgeMoves,
-                )
-            } else {
-                panic!(
-                    "Critical edge: can't insert moves between blocks {:?} and {:?}",
-                    from, to
-                );
-            }
-        }
-
-        #[derive(PartialEq)]
-        struct InterBlockDest {
-            to: Block,
-            from: Block,
-            alloc: Allocation,
-        }
-
-        impl InterBlockDest {
-            fn key(&self) -> u64 {
-                u64_key(self.from.raw_u32(), self.to.raw_u32())
-            }
-        }
-
         let mut inter_block_sources: FxHashMap<Block, Allocation> = FxHashMap::default();
         let mut inter_block_dests = Vec::with_capacity(self.func.num_blocks());
-
-        #[derive(Hash, Eq, PartialEq)]
-        struct BlockparamSourceKey {
-            bits: u64,
-        }
-
-        impl BlockparamSourceKey {
-            fn new(from_block: Block, to_vreg: VRegIndex) -> Self {
-                BlockparamSourceKey {
-                    bits: u64_key(from_block.raw_u32(), to_vreg.raw_u32()),
-                }
-            }
-        }
-
-        struct BlockparamDest {
-            from_block: Block,
-            to_block: Block,
-            to_vreg: VRegIndex,
-            alloc: Allocation,
-        }
-
-        impl BlockparamDest {
-            fn key(&self) -> u64 {
-                u64_key(self.to_block.raw_u32(), self.from_block.raw_u32())
-            }
-
-            fn source(&self) -> BlockparamSourceKey {
-                BlockparamSourceKey::new(self.from_block, self.to_vreg)
-            }
-        }
 
         let mut block_param_sources =
             FxHashMap::<BlockparamSourceKey, Allocation>::with_capacity_and_hasher(
@@ -1009,5 +837,187 @@ impl<'a, F: Function> Env<'a, F> {
         }
 
         edits
+    }
+}
+
+#[derive(Default)]
+pub struct MovesCtx {
+    inserted_moves: InsertedMoves,
+    inter_block_sources: FxHashMap<Block, Allocation>,
+    inter_block_dests: Vec<InterBlockDest>,
+    block_param_sources: FxHashMap<BlockparamSourceKey, Allocation>,
+    block_param_dests: Vec<BlockparamDest>,
+    reuse_input_insts: Vec<Inst>,
+}
+
+/// Buffered information about the previous liverange that was processed.
+struct PrevBuffer {
+    prev: Option<LiveRangeListEntry>,
+    prev_ins_idx: usize,
+    buffered: Option<LiveRangeListEntry>,
+    buffered_ins_idx: usize,
+}
+
+impl PrevBuffer {
+    fn new(prev_ins_idx: usize) -> Self {
+        Self {
+            prev: None,
+            prev_ins_idx,
+            buffered: None,
+            buffered_ins_idx: prev_ins_idx,
+        }
+    }
+
+    /// Returns the previous `LiveRangeListEntry` when it's present.
+    #[inline(always)]
+    fn is_valid(&self) -> Option<LiveRangeListEntry> {
+        self.prev
+    }
+
+    /// Fetch the current index into the `Env::blockparam_ins` vector.
+    #[inline(always)]
+    fn blockparam_ins_idx(&self) -> usize {
+        self.prev_ins_idx
+    }
+
+    /// Record this index as the next index to use when the previous liverange buffer
+    /// anvances.
+    #[inline(always)]
+    fn update_blockparam_ins_idx(&mut self, idx: usize) {
+        self.buffered_ins_idx = idx;
+    }
+
+    /// As overlapping liveranges might start at the same program point, we buffer the
+    /// previous liverange used when determining where to take the last value from for
+    /// intra-block moves. The liveranges we process are buffered until we encounter one
+    /// that starts at a later program point, indicating that it's now safe to advance the
+    /// previous LR buffer. We accumulate the longest-lived liverange in the buffer as a
+    /// heuristic for finding the most stable source of a value.
+    ///
+    /// We also buffer the index into the `Env::blockparam_ins` vector, as we may see
+    /// multiple uses of a blockparam within a single instruction, and as such may need to
+    /// generate multiple blockparam move destinations by re-traversing that section of the
+    /// vector.
+    #[inline(always)]
+    fn advance(&mut self, current: LiveRangeListEntry) {
+        // Advance the `prev` pointer to the `next` pointer, as long as the `next` pointer
+        // does not start at the same time as the current LR we're processing.
+        if self
+            .buffered
+            .map(|entry| entry.range.from < current.range.from)
+            .unwrap_or(false)
+        {
+            self.prev = self.buffered;
+            self.prev_ins_idx = self.buffered_ins_idx;
+        }
+
+        // Advance the `next` pointer to the currently processed LR, as long as it ends
+        // later than the current `next`.
+        if self
+            .buffered
+            .map(|entry| entry.range.to < current.range.to)
+            .unwrap_or(true)
+        {
+            self.buffered = Some(current);
+        }
+    }
+}
+
+// Determine the ProgPoint where moves on this (from, to)
+// edge should go:
+// - If there is more than one in-edge to `to`, then
+//   `from` must have only one out-edge; moves go at tail of
+//   `from` just before last Branch/Ret.
+// - Otherwise, there must be at most one in-edge to `to`,
+//   and moves go at start of `to`.
+#[inline(always)]
+fn choose_move_location<'a, F: Function>(
+    env: &Env<'a, F>,
+    from: Block,
+    to: Block,
+) -> (ProgPoint, InsertMovePrio) {
+    let from_last_insn = env.func.block_insns(from).last();
+    let to_first_insn = env.func.block_insns(to).first();
+    let from_is_ret = env.func.is_ret(from_last_insn);
+    let to_is_entry = env.func.entry_block() == to;
+    let from_outs = env.func.block_succs(from).len() + if from_is_ret { 1 } else { 0 };
+    let to_ins = env.func.block_preds(to).len() + if to_is_entry { 1 } else { 0 };
+
+    if to_ins > 1 && from_outs <= 1 {
+        (
+            // N.B.: though semantically the edge moves happen
+            // after the branch, we must insert them before
+            // the branch because otherwise, of course, they
+            // would never execute. This is correct even in
+            // the presence of branches that read register
+            // inputs (e.g. conditional branches on some RISCs
+            // that branch on reg zero/not-zero, or any
+            // indirect branch), but for a very subtle reason:
+            // all cases of such branches will (or should)
+            // have multiple successors, and thus due to
+            // critical-edge splitting, their successors will
+            // have only the single predecessor, and we prefer
+            // to insert at the head of the successor in that
+            // case (rather than here). We make this a
+            // requirement, in fact: the user of this library
+            // shall not read registers in a branch
+            // instruction of there is only one successor per
+            // the given CFG information.
+            ProgPoint::before(from_last_insn),
+            InsertMovePrio::OutEdgeMoves,
+        )
+    } else if to_ins <= 1 {
+        (
+            ProgPoint::before(to_first_insn),
+            InsertMovePrio::InEdgeMoves,
+        )
+    } else {
+        panic!(
+            "Critical edge: can't insert moves between blocks {:?} and {:?}",
+            from, to
+        );
+    }
+}
+
+#[derive(PartialEq)]
+struct InterBlockDest {
+    to: Block,
+    from: Block,
+    alloc: Allocation,
+}
+
+impl InterBlockDest {
+    fn key(&self) -> u64 {
+        u64_key(self.from.raw_u32(), self.to.raw_u32())
+    }
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct BlockparamSourceKey {
+    bits: u64,
+}
+
+impl BlockparamSourceKey {
+    fn new(from_block: Block, to_vreg: VRegIndex) -> Self {
+        BlockparamSourceKey {
+            bits: u64_key(from_block.raw_u32(), to_vreg.raw_u32()),
+        }
+    }
+}
+
+struct BlockparamDest {
+    from_block: Block,
+    to_block: Block,
+    to_vreg: VRegIndex,
+    alloc: Allocation,
+}
+
+impl BlockparamDest {
+    fn key(&self) -> u64 {
+        u64_key(self.to_block.raw_u32(), self.from_block.raw_u32())
+    }
+
+    fn source(&self) -> BlockparamSourceKey {
+        BlockparamSourceKey::new(self.from_block, self.to_vreg)
     }
 }
